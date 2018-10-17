@@ -22,17 +22,7 @@ import (
 
 	"k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/kube-state-metrics/pkg/collectors/testutils"
-	"k8s.io/kube-state-metrics/pkg/options"
 )
-
-type mockPodDisruptionBudgetStore struct {
-	list func() (v1beta1.PodDisruptionBudgetList, error)
-}
-
-func (ns mockPodDisruptionBudgetStore) List() (v1beta1.PodDisruptionBudgetList, error) {
-	return ns.list()
-}
 
 func TestPodDisruptionBudgetCollector(t *testing.T) {
 	// Fixed metadata on type and help text. We prepend this to every expected
@@ -51,67 +41,60 @@ func TestPodDisruptionBudgetCollector(t *testing.T) {
 	# HELP kube_poddisruptionbudget_status_observed_generation Most recent generation observed when updating this PDB status
 	# TYPE kube_poddisruptionbudget_status_observed_generation gauge
 	`
-	cases := []struct {
-		pdbs []v1beta1.PodDisruptionBudget
-		want string
-	}{
+	cases := []generateMetricsTestCase{
 		{
-			pdbs: []v1beta1.PodDisruptionBudget{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:              "pdb1",
-						CreationTimestamp: metav1.Time{Time: time.Unix(1500000000, 0)},
-						Namespace:         "ns1",
-						Generation:        21,
-					},
-					Status: v1beta1.PodDisruptionBudgetStatus{
-						CurrentHealthy:        12,
-						DesiredHealthy:        10,
-						PodDisruptionsAllowed: 2,
-						ExpectedPods:          15,
-						ObservedGeneration:    111,
-					},
-				}, {
-					ObjectMeta: metav1.ObjectMeta{
-						Name:       "pdb2",
-						Namespace:  "ns2",
-						Generation: 14,
-					},
-					Status: v1beta1.PodDisruptionBudgetStatus{
-						CurrentHealthy:        8,
-						DesiredHealthy:        9,
-						PodDisruptionsAllowed: 0,
-						ExpectedPods:          10,
-						ObservedGeneration:    1111,
-					},
+			Obj: &v1beta1.PodDisruptionBudget{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "pdb1",
+					CreationTimestamp: metav1.Time{Time: time.Unix(1500000000, 0)},
+					Namespace:         "ns1",
+					Generation:        21,
+				},
+				Status: v1beta1.PodDisruptionBudgetStatus{
+					CurrentHealthy:        12,
+					DesiredHealthy:        10,
+					PodDisruptionsAllowed: 2,
+					ExpectedPods:          15,
+					ObservedGeneration:    111,
 				},
 			},
-			want: metadata + `
-				kube_poddisruptionbudget_created{namespace="ns1",poddisruptionbudget="pdb1"} 1.5e+09
-				kube_poddisruptionbudget_status_current_healthy{namespace="ns1",poddisruptionbudget="pdb1"} 12
+			Want: `
+			kube_poddisruptionbudget_created{namespace="ns1",poddisruptionbudget="pdb1"} 1.5e+09
+			kube_poddisruptionbudget_status_current_healthy{namespace="ns1",poddisruptionbudget="pdb1"} 12
+			kube_poddisruptionbudget_status_desired_healthy{namespace="ns1",poddisruptionbudget="pdb1"} 10
+			kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace="ns1",poddisruptionbudget="pdb1"} 2
+			kube_poddisruptionbudget_status_expected_pods{namespace="ns1",poddisruptionbudget="pdb1"} 15
+			kube_poddisruptionbudget_status_observed_generation{namespace="ns1",poddisruptionbudget="pdb1"} 111
+			`,
+		},
+		{
+			Obj: &v1beta1.PodDisruptionBudget{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "pdb2",
+					Namespace:  "ns2",
+					Generation: 14,
+				},
+				Status: v1beta1.PodDisruptionBudgetStatus{
+					CurrentHealthy:        8,
+					DesiredHealthy:        9,
+					PodDisruptionsAllowed: 0,
+					ExpectedPods:          10,
+					ObservedGeneration:    1111,
+				},
+			},
+			Want: `
 				kube_poddisruptionbudget_status_current_healthy{namespace="ns2",poddisruptionbudget="pdb2"} 8
-				kube_poddisruptionbudget_status_desired_healthy{namespace="ns1",poddisruptionbudget="pdb1"} 10
 				kube_poddisruptionbudget_status_desired_healthy{namespace="ns2",poddisruptionbudget="pdb2"} 9
-				kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace="ns1",poddisruptionbudget="pdb1"} 2
 				kube_poddisruptionbudget_status_pod_disruptions_allowed{namespace="ns2",poddisruptionbudget="pdb2"} 0
-				kube_poddisruptionbudget_status_expected_pods{namespace="ns1",poddisruptionbudget="pdb1"} 15
 				kube_poddisruptionbudget_status_expected_pods{namespace="ns2",poddisruptionbudget="pdb2"} 10
-				kube_poddisruptionbudget_status_observed_generation{namespace="ns1",poddisruptionbudget="pdb1"} 111
 				kube_poddisruptionbudget_status_observed_generation{namespace="ns2",poddisruptionbudget="pdb2"} 1111
 			`,
 		},
 	}
-	for _, c := range cases {
-		pdbc := &podDisruptionBudgetCollector{
-			store: &mockPodDisruptionBudgetStore{
-				list: func() (v1beta1.PodDisruptionBudgetList, error) {
-					return v1beta1.PodDisruptionBudgetList{Items: c.pdbs}, nil
-				},
-			},
-			opts: &options.Options{},
-		}
-		if err := testutils.GatherAndCompare(pdbc, c.want, nil); err != nil {
-			t.Errorf("unexpected collecting result:\n%s", err)
+	for i, c := range cases {
+		c.Func = generatePodDisruptionBudgetMetrics
+		if err := c.run(); err != nil {
+			t.Errorf("unexpected collecting result in %vth run:\n%s", i, err)
 		}
 	}
 }
